@@ -47,9 +47,15 @@ add_message_files(
   TrackingInfo.msg
 )
 
+add_service_files(
+  FILES
+  GPSTrigger.srv
+)
+
 generate_messages(
   DEPENDENCIES
   std_msgs
+  geometry_msgs
 )
 
 ###################################
@@ -82,6 +88,8 @@ include_directories(
 # Msckf Vio
 add_library(msckf_vio
   src/msckf_vio.cpp
+  src/gpsvio.cpp
+  src/sekfse_em.cpp
   src/utils.cpp
 )
 add_dependencies(msckf_vio
@@ -91,6 +99,7 @@ add_dependencies(msckf_vio
 target_link_libraries(msckf_vio
   ${catkin_LIBRARIES}
   ${SUITESPARSE_LIBRARIES}
+  ${OpenCV_LIBRARIES}
 )
 
 # Msckf Vio nodelet
@@ -104,6 +113,7 @@ add_dependencies(msckf_vio_nodelet
 target_link_libraries(msckf_vio_nodelet
   msckf_vio
   ${catkin_LIBRARIES}
+  ${OpenCV_LIBRARIES}
 )
 
 # Image processor
@@ -131,7 +141,39 @@ add_dependencies(image_processor_nodelet
 target_link_libraries(image_processor_nodelet
   image_processor
   ${catkin_LIBRARIES}
+  ${OpenCV_LIBRARIES}
 )
+
+# GPSVIO nodelet
+add_library(gpsvio_nodelet
+  src/gpsvio_nodelet.cpp
+)
+
+add_dependencies(gpsvio_nodelet
+  ${${PROJECT_NAME}_EXPORTED_TARGETS}
+  ${catkin_EXPORTED_TARGETS}
+)
+target_link_libraries(gpsvio_nodelet
+  msckf_vio
+  ${catkin_LIBRARIES}
+  ${OpenCV_LIBRARIES}
+)
+
+# SEKF SE EM nodelet
+add_library(sekfse_em_nodelet
+  src/sekfse_em_nodelet.cpp
+)
+
+add_dependencies(sekfse_em_nodelet
+  ${${PROJECT_NAME}_EXPORTED_TARGETS}
+  ${catkin_EXPORTED_TARGETS}
+)
+target_link_libraries(sekfse_em_nodelet
+  msckf_vio
+  ${catkin_LIBRARIES}
+  ${OpenCV_LIBRARIES}
+)
+
 
 #############
 ## Install ##
@@ -168,6 +210,7 @@ if(CATKIN_ENABLE_TESTING)
   )
   target_link_libraries(test_feature_init
     ${catkin_LIBRARIES}
+    ${OpenCV_LIBRARIES}
   )
 
   # Math utils test

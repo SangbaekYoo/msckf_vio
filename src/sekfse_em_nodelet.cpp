@@ -5,21 +5,19 @@
  * All rights reserved.
  */
 
-#include <msckf_vio/msckf_vio_nodelet.h>
+#include <msckf_vio/sekfse_em_nodelet.h>
 
 namespace msckf_vio {
-void MsckfVioNodelet::onInit() {
-  ROS_INFO("I am here msckf_vio_nodelet");
-  msckf_vio_ptr.reset(new MsckfVio(getPrivateNodeHandle()));
-  if (!msckf_vio_ptr->initialize()) {
+void SekfseEMNodelet::onInit() {
+  ROS_INFO("I am here stable embedding");
+  sekfse_em_ptr.reset(new SekfseEM(getPrivateNodeHandle()));
+  if (!sekfse_em_ptr->initialize()) {
     ROS_ERROR("Cannot initialize MSCKF VIO...");
     return;
   }
   return;
 }
 
-PLUGINLIB_EXPORT_CLASS(msckf_vio::MsckfVioNodelet,
-    nodelet::Nodelet);
+PLUGINLIB_EXPORT_CLASS(msckf_vio::SekfseEMNodelet, nodelet::Nodelet);
 
 } // end namespace msckf_vio
-

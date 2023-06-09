@@ -18,3 +18,24 @@
     </description>
   </class>
 </library>
+
+<library path="lib/libgpsvio_nodelet">
+  <class name="msckf_vio/GPSVIONodelet"
+         type="msckf_vio::GPSVIONodelet"
+         base_class_type="nodelet::Nodelet">
+    <description>
+      GPS fusion msckf vio
+    </description>
+  </class>
+</library>
+
+
+<library path="lib/libsekfse_em_nodelet">
+  <class name="msckf_vio/SekfseEMNodelet"
+         type="msckf_vio::SekfseEMNodelet"
+         base_class_type="nodelet::Nodelet">
+    <description>
+      S-MSCKF with stable embedding
+    </description>
+  </class>
+</library>

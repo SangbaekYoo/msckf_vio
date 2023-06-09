@@ -5,8 +5,8 @@
  * All rights reserved.
  */
 
-#ifndef MSCKF_VIO_H
-#define MSCKF_VIO_H
+#ifndef SEKFSE_EM_H
+#define SEKFSE_EM_H
 
 #include <map>
 #include <set>
@@ -29,24 +29,24 @@
 
 namespace msckf_vio {
 /*
- * @brief MsckfVio Implements the algorithm in
+ * @brief SiekfVio Implements the algorithm in
  *    Anatasios I. Mourikis, and Stergios I. Roumeliotis,
  *    "A Multi-State Constraint Kalman Filter for Vision-aided
  *    Inertial Navigation",
  *    http://www.ee.ucr.edu/~mourikis/tech_reports/TR_MSCKF.pdf
  */
-class MsckfVio {
+class SekfseEM {
   public:
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
     // Constructor
-    MsckfVio(ros::NodeHandle& pnh);
+    SekfseEM(ros::NodeHandle& pnh);
     // Disable copy and assign constructor
-    MsckfVio(const MsckfVio&) = delete;
-    MsckfVio operator=(const MsckfVio&) = delete;
+    SekfseEM(const SekfseEM&) = delete;
+    SekfseEM operator=(const SekfseEM&) = delete;
 
     // Destructor
-    ~MsckfVio() {}
+    ~SekfseEM() {}
 
     /*
      * @brief initialize Initialize the VIO.
@@ -58,9 +58,10 @@ class MsckfVio {
      */
     void reset();
 
-    typedef boost::shared_ptr<MsckfVio> Ptr;
-    typedef boost::shared_ptr<const MsckfVio> ConstPtr;
-
+    typedef boost::shared_ptr<SekfseEM> Ptr;
+    typedef boost::shared_ptr<const SekfseEM> ConstPtr;
+    
+    Eigen::Matrix<double,6,6> convertPoseCov();
   private:
     /*
      * @brief StateServer Store one IMU states and several
@@ -144,7 +145,7 @@ class MsckfVio {
     // for a single feature observed at a single camera frame.
     void measurementJacobian(const StateIDType& cam_state_id,
         const FeatureIDType& feature_id,
-        Eigen::Matrix<double, 4, 6>& H_x,
+        Eigen::Matrix<double, 4, 7>& H_x,
         Eigen::Matrix<double, 4, 3>& H_f,
         Eigen::Vector4d& r);
     // This function computes the Jacobian of all measurements viewed
@@ -224,6 +225,9 @@ class MsckfVio {
     // each iteration of the filter.
     double frame_rate;
 
+    // stable embedding parameter
+    double SE_alpha;
+
     // Debugging variables and functions
     void mocapOdomCallback(
         const nav_msgs::OdometryConstPtr& msg);
@@ -232,10 +236,11 @@ class MsckfVio {
     ros::Publisher mocap_odom_pub;
     geometry_msgs::TransformStamped raw_mocap_odom_msg;
     Eigen::Isometry3d mocap_initial_frame;
+    
 };
 
-typedef MsckfVio::Ptr MsckfVioPtr;
-typedef MsckfVio::ConstPtr MsckfVioConstPtr;
+typedef SekfseEM::Ptr SekfseEMPtr;
+typedef SekfseEM::ConstPtr SekfseEMConstPtr;
 
 } // namespace msckf_vio
 

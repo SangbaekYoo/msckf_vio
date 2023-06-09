@@ -5,20 +5,20 @@
  * All rights reserved.
  */
 
-#include <msckf_vio/msckf_vio_nodelet.h>
+#include <msckf_vio/gpsvio_nodelet.h>
 
 namespace msckf_vio {
-void MsckfVioNodelet::onInit() {
-  ROS_INFO("I am here msckf_vio_nodelet");
-  msckf_vio_ptr.reset(new MsckfVio(getPrivateNodeHandle()));
-  if (!msckf_vio_ptr->initialize()) {
+void GPSVIONodelet::onInit() {
+  ROS_INFO("I am here gpsvio_nodelet");
+  gpsvio_ptr.reset(new GPSVIO(getPrivateNodeHandle()));
+  if (!gpsvio_ptr->initialize()) {
     ROS_ERROR("Cannot initialize MSCKF VIO...");
     return;
   }
   return;
 }
 
-PLUGINLIB_EXPORT_CLASS(msckf_vio::MsckfVioNodelet,
+PLUGINLIB_EXPORT_CLASS(msckf_vio::GPSVIONodelet,
     nodelet::Nodelet);
 
 } // end namespace msckf_vio

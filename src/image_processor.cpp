@@ -201,6 +201,7 @@ bool ImageProcessor::initialize() {
       processor_config.fast_threshold);
 
   if (!createRosIO()) return false;
+  ROS_INFO("I am here... image proecessing");
   ROS_INFO("Finish creating ROS IO...");
 
   return true;

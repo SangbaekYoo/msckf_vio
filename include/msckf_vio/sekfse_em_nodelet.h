@@ -1,28 +1,27 @@
 /*
  * COPYRIGHT AND PERMISSION NOTICE
- * Penn Software MSCKF_VIO
+ * Penn Software SEKFSE_EM
  * Copyright (C) 2017 The Trustees of the University of Pennsylvania
  * All rights reserved.
  */
 
-#ifndef MSCKF_VIO_NODELET_H
-#define MSCKF_VIO_NODELET_H
+#ifndef SEKFSE_EM_NODELET_H
+#define SEKFSE_EM_NODELET_H
 
 #include <nodelet/nodelet.h>
 #include <pluginlib/class_list_macros.h>
-#include <msckf_vio/msckf_vio.h>
+#include <msckf_vio/sekfse_em.h>
 
 namespace msckf_vio {
-class MsckfVioNodelet : public nodelet::Nodelet {
+class SekfseEMNodelet : public nodelet::Nodelet {
 public:
-  MsckfVioNodelet() { return; }
-  ~MsckfVioNodelet() { return; }
+  SekfseEMNodelet() { return; }
+  ~SekfseEMNodelet() { return; }
 
 private:
   virtual void onInit();
-  MsckfVioPtr msckf_vio_ptr;
+  SekfseEMPtr sekfse_em_ptr;
 };
 } // end namespace msckf_vio
 
 #endif
-

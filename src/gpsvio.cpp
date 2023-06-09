@@ -1,6 +1,6 @@
 /*
  * COPYRIGHT AND PERMISSION NOTICE
- * Penn Software MSCKF_VIO
+ * Penn Software MSCKF_VIO_
  * Copyright (C) 2017 The Trustees of the University of Pennsylvania
  * All rights reserved.
  */
@@ -23,7 +23,7 @@
 #include <pcl_ros/point_cloud.h>
 #include <pcl/point_types.h>
 
-#include <msckf_vio/msckf_vio.h>
+#include <msckf_vio/gpsvio.h>
 #include <msckf_vio/math_utils.hpp>
 #include <msckf_vio/utils.h>
 
@@ -32,32 +32,32 @@ using namespace Eigen;
 
 namespace msckf_vio{
 // Static member variables in IMUState class.
-StateIDType IMUState::next_id = 0;
-double IMUState::gyro_noise = 0.001;
-double IMUState::acc_noise = 0.01;
-double IMUState::gyro_bias_noise = 0.001;
-double IMUState::acc_bias_noise = 0.01;
-Vector3d IMUState::gravity = Vector3d(0, 0, -GRAVITY_ACCELERATION);
-Isometry3d IMUState::T_imu_body = Isometry3d::Identity();
+//StateIDType IMUState::next_id = 0;
+//double IMUState::gyro_noise = 0.001;
+//double IMUState::acc_noise = 0.01;
+//double IMUState::gyro_bias_noise = 0.001;
+//double IMUState::acc_bias_noise = 0.01;
+//Vector3d IMUState::gravity = Vector3d(0, 0, -GRAVITY_ACCELERATION);
+//Isometry3d IMUState::T_imu_body = Isometry3d::Identity();
 
 // Static member variables in CAMState class.
-Isometry3d CAMState::T_cam0_cam1 = Isometry3d::Identity();
+//Isometry3d CAMState::T_cam0_cam1 = Isometry3d::Identity();
 
 // Static member variables in Feature class.
-FeatureIDType Feature::next_id = 0;
-double Feature::observation_noise = 0.01;
-Feature::OptimizationConfig Feature::optimization_config;
+//FeatureIDType Feature::next_id = 0;
+//double Feature::observation_noise = 0.01;
+//Feature::OptimizationConfig Feature::optimization_config;
 
-map<int, double> MsckfVio::chi_squared_test_table;
+map<int, double> GPSVIO::chi_squared_test_table;
 
-MsckfVio::MsckfVio(ros::NodeHandle& pnh):
+GPSVIO::GPSVIO(ros::NodeHandle& pnh):
   is_gravity_set(false),
   is_first_img(true),
   nh(pnh) {
   return;
 }
 
-bool MsckfVio::loadParameters() {
+bool GPSVIO::loadParameters() {
   // Frame id
   nh.param<string>("fixed_frame_id", fixed_frame_id, "world");
   nh.param<string>("child_frame_id", child_frame_id, "robot");
@@ -79,6 +79,9 @@ bool MsckfVio::loadParameters() {
   nh.param<double>("noise/gyro_bias", IMUState::gyro_bias_noise, 0.001);
   nh.param<double>("noise/acc_bias", IMUState::acc_bias_noise, 0.01);
   nh.param<double>("noise/feature", Feature::observation_noise, 0.01);
+  nh.param<double>("noise/gps_x", gps_observation_noise_x, 0.01);
+  nh.param<double>("noise/gps_y", gps_observation_noise_y, 0.01);
+  nh.param<double>("noise/gps_z", gps_observation_noise_z, 0.01);
 
   // Use variance instead of standard deviation.
   IMUState::gyro_noise *= IMUState::gyro_noise;
@@ -86,6 +89,9 @@ bool MsckfVio::loadParameters() {
   IMUState::gyro_bias_noise *= IMUState::gyro_bias_noise;
   IMUState::acc_bias_noise *= IMUState::acc_bias_noise;
   Feature::observation_noise *= Feature::observation_noise;
+  gps_observation_noise_x *= gps_observation_noise_x;
+  gps_observation_noise_y *= gps_observation_noise_y;
+  gps_observation_noise_z *= gps_observation_noise_z;
 
   // Set the initial IMU state.
   // The intial orientation and position will be set to the origin
@@ -115,8 +121,27 @@ bool MsckfVio::loadParameters() {
       extrinsic_rotation_cov, 3.0462e-4);
   nh.param<double>("initial_covariance/extrinsic_translation_cov",
       extrinsic_translation_cov, 1e-4);
+  double rotation_vio_enu_cov, translation_vio_enu_cov;
+  nh.param<double>("initial_covariance/rotation_vio_enu_cov",
+      rotation_vio_enu_cov, 3.0462e-4);
+  nh.param<double>("initial_covariance/translation_vio_enu_cov",
+      translation_vio_enu_cov, 1e-4);
+  double translation_gps_i_cov;
+  nh.param<double>("initial_covariance/translation_gps_i_cov",
+      translation_gps_i_cov, 1e-4);
 
-  state_server.state_cov = MatrixXd::Zero(21, 21);
+  double t_gps_imu_x, t_gps_imu_y, t_gps_imu_z; 
+  nh.param<double>("t_gps_imu_x",
+      t_gps_imu_x, 0.0);
+  nh.param<double>("t_gps_imu_y",
+      t_gps_imu_y, 0.0);
+  nh.param<double>("t_gps_imu_z",
+      t_gps_imu_z, 0.0);
+
+  Vector3d t_gps_imu;
+  t_gps_imu << t_gps_imu_x, t_gps_imu_y, t_gps_imu_z;
+
+  state_server.state_cov = MatrixXd::Zero(30, 30);
   for (int i = 3; i < 6; ++i)
     state_server.state_cov(i, i) = gyro_bias_cov;
   for (int i = 6; i < 9; ++i)
@@ -127,6 +152,12 @@ bool MsckfVio::loadParameters() {
     state_server.state_cov(i, i) = extrinsic_rotation_cov;
   for (int i = 18; i < 21; ++i)
     state_server.state_cov(i, i) = extrinsic_translation_cov;
+  for (int i = 21; i < 24; ++i)
+    state_server.state_cov(i, i) = rotation_vio_enu_cov;
+  for (int i = 24; i < 27; ++i)
+    state_server.state_cov(i, i) = translation_vio_enu_cov;
+  for (int i = 27; i < 30; ++i)
+    state_server.state_cov(i, i) = translation_gps_i_cov;
 
   // Transformation offsets between the frames involved.
   Isometry3d T_imu_cam0 = utils::getTransformEigen(nh, "cam0/T_cam_imu");
@@ -134,6 +165,8 @@ bool MsckfVio::loadParameters() {
 
   state_server.imu_state.R_imu_cam0 = T_cam0_imu.linear().transpose();
   state_server.imu_state.t_cam0_imu = T_cam0_imu.translation();
+  state_server.gps_state.t_gps_imu = t_gps_imu;
+
   CAMState::T_cam0_cam1 =
     utils::getTransformEigen(nh, "cam1/T_cn_cnm1");
   IMUState::T_imu_body =
@@ -156,6 +189,9 @@ bool MsckfVio::loadParameters() {
   ROS_INFO("acc noise: %.10f", IMUState::acc_noise);
   ROS_INFO("acc bias noise: %.10f", IMUState::acc_bias_noise);
   ROS_INFO("observation noise: %.10f", Feature::observation_noise);
+  ROS_INFO("gps_observation noise_x: %.10f", gps_observation_noise_x);
+  ROS_INFO("gps_observation noise_y: %.10f", gps_observation_noise_y);
+  ROS_INFO("gps_observation noise_z: %.10f", gps_observation_noise_z);
   ROS_INFO("initial velocity: %f, %f, %f",
       state_server.imu_state.velocity(0),
       state_server.imu_state.velocity(1),
@@ -167,37 +203,50 @@ bool MsckfVio::loadParameters() {
       extrinsic_rotation_cov);
   ROS_INFO("initial extrinsic translation cov: %f",
       extrinsic_translation_cov);
+  ROS_INFO("initial rotation_vio_enu_cov: %f",
+      rotation_vio_enu_cov);
+  ROS_INFO("initial translation_vio_enu_cov: %f",
+      translation_vio_enu_cov);
+  ROS_INFO("initial translation_gps_i_cov: %f",
+      translation_gps_i_cov);
 
   cout << T_imu_cam0.linear() << endl;
   cout << T_imu_cam0.translation().transpose() << endl;
+  cout << t_gps_imu << endl;
 
   ROS_INFO("max camera state #: %d", max_cam_state_size);
   ROS_INFO("===========================================");
   return true;
 }
 
-bool MsckfVio::createRosIO() {
+bool GPSVIO::createRosIO() {
   odom_pub = nh.advertise<nav_msgs::Odometry>("odom", 10);
+  px4_pub = nh.advertise<geometry_msgs::PoseStamped>("/mavros/vision_pose/pose", 10);
   feature_pub = nh.advertise<sensor_msgs::PointCloud2>(
       "feature_point_cloud", 10);
 
   reset_srv = nh.advertiseService("reset",
-      &MsckfVio::resetCallback, this);
+      &GPSVIO::resetCallback, this);
+
+  gps_fusion_srv = nh.advertiseService("gps_fusion",
+      &GPSVIO::gpsfusionCallback, this);
 
   imu_sub = nh.subscribe("imu", 100,
-      &MsckfVio::imuCallback, this);
+      &GPSVIO::imuCallback, this);
   feature_sub = nh.subscribe("features", 40,
-      &MsckfVio::featureCallback, this);
+      &GPSVIO::featureCallback, this);
+  gps_sub = nh.subscribe("gps", 40,
+      &GPSVIO::gpsCallback, this);
 
   mocap_odom_sub = nh.subscribe("mocap_odom", 10,
-      &MsckfVio::mocapOdomCallback, this);
+      &GPSVIO::mocapOdomCallback, this);
   mocap_odom_pub = nh.advertise<nav_msgs::Odometry>("gt_odom", 1);
 
   return true;
 }
 
-bool MsckfVio::initialize() {
-  ROS_INFO("I am here... msckf vio");
+bool GPSVIO::initialize() {
+  ROS_INFO("I am here...gpsvio");
   if (!loadParameters()) return false;
   ROS_INFO("Finish loading ROS parameters...");
 
@@ -222,13 +271,14 @@ bool MsckfVio::initialize() {
   }
 
   if (!createRosIO()) return false;
-  ROS_INFO("I am here... msckf");
+  ROS_INFO("I am here...gpsvio");
   ROS_INFO("Finish creating ROS IO...");
+  gps_fusion_enable = false;
 
   return true;
 }
 
-void MsckfVio::imuCallback(
+void GPSVIO::imuCallback(
     const sensor_msgs::ImuConstPtr& msg) {
 
   // IMU msgs are pushed backed into a buffer instead of
@@ -247,7 +297,7 @@ void MsckfVio::imuCallback(
   return;
 }
 
-void MsckfVio::initializeGravityAndBias() {
+void GPSVIO::initializeGravityAndBias() {
 
   // Initialize gravity and gyro bias.
   Vector3d sum_angular_vel = Vector3d::Zero();
@@ -285,7 +335,7 @@ void MsckfVio::initializeGravityAndBias() {
   return;
 }
 
-bool MsckfVio::resetCallback(
+bool GPSVIO::resetCallback(
     std_srvs::Trigger::Request& req,
     std_srvs::Trigger::Response& res) {
 
@@ -310,6 +360,14 @@ bool MsckfVio::resetCallback(
   // Remove all existing camera states.
   state_server.cam_states.clear();
 
+  // Reset the GPS state.
+  GPSState& gps_state = state_server.gps_state;
+  gps_state.time = 0.0;
+  gps_state.orientation = Vector4d(0.0, 0.0, 0.0, 1.0);
+  gps_state.position = Vector3d::Zero();
+  gps_state.orientation_null = Vector4d(0.0, 0.0, 0.0, 1.0);
+  gps_state.position_null = Vector3d::Zero();
+  
   // Reset the state covariance.
   double gyro_bias_cov, acc_bias_cov, velocity_cov;
   nh.param<double>("initial_covariance/velocity",
@@ -325,7 +383,16 @@ bool MsckfVio::resetCallback(
   nh.param<double>("initial_covariance/extrinsic_translation_cov",
       extrinsic_translation_cov, 1e-4);
 
-  state_server.state_cov = MatrixXd::Zero(21, 21);
+  double rotation_vio_enu_cov, translation_vio_enu_cov;
+  nh.param<double>("initial_covariance/rotation_vio_enu_cov",
+      rotation_vio_enu_cov, 3.0462e-4);
+  nh.param<double>("initial_covariance/translation_vio_enu_cov",
+      translation_vio_enu_cov, 1e-4);
+  double translation_gps_i_cov;
+  nh.param<double>("initial_covariance/translation_gps_i_cov",
+      translation_gps_i_cov, 3.0462e-4);
+
+  state_server.state_cov = MatrixXd::Zero(30, 30);
   for (int i = 3; i < 6; ++i)
     state_server.state_cov(i, i) = gyro_bias_cov;
   for (int i = 6; i < 9; ++i)
@@ -336,6 +403,12 @@ bool MsckfVio::resetCallback(
     state_server.state_cov(i, i) = extrinsic_rotation_cov;
   for (int i = 18; i < 21; ++i)
     state_server.state_cov(i, i) = extrinsic_translation_cov;
+  for (int i = 21; i < 24; ++i)
+    state_server.state_cov(i, i) = rotation_vio_enu_cov;
+  for (int i = 24; i < 27; ++i)
+    state_server.state_cov(i, i) = translation_vio_enu_cov;
+  for (int i = 27; i < 30; ++i)
+    state_server.state_cov(i, i) = translation_gps_i_cov;
 
   // Clear all exsiting features in the map.
   map_server.clear();
@@ -349,17 +422,75 @@ bool MsckfVio::resetCallback(
 
   // Restart the subscribers.
   imu_sub = nh.subscribe("imu", 100,
-      &MsckfVio::imuCallback, this);
+      &GPSVIO::imuCallback, this);
   feature_sub = nh.subscribe("features", 40,
-      &MsckfVio::featureCallback, this);
+      &GPSVIO::featureCallback, this);
+  gps_sub = nh.subscribe("utm", 40,
+      &GPSVIO::gpsCallback, this);
+
+  gps_fusion_enable = false;
 
   // TODO: When can the reset fail?
   res.success = true;
+
   ROS_WARN("Resetting msckf vio completed...");
   return true;
 }
 
-void MsckfVio::featureCallback(
+bool GPSVIO::gpsfusionCallback(
+    msckf_vio::GPSTrigger::Request& req,
+    msckf_vio::GPSTrigger::Response& res) {
+    std::cout << "gps fusion received!" << std::endl;
+  if (!gps_fusion_enable){
+    Eigen::Quaterniond q_vio_enu;
+    Eigen::Matrix3d R_vio_enu;
+    Eigen::Vector3d t_vio_enu;
+
+    geometry_msgs::Pose pose_vio_enu = req.pose_vio_enu; //JPL
+    q_vio_enu.x() = pose_vio_enu.orientation.x;
+    q_vio_enu.y() = pose_vio_enu.orientation.y;
+    q_vio_enu.z() = pose_vio_enu.orientation.z;
+    q_vio_enu.w() = pose_vio_enu.orientation.w;
+    t_vio_enu.x() = pose_vio_enu.position.x;
+    t_vio_enu.y() = pose_vio_enu.position.y;
+    t_vio_enu.z() = pose_vio_enu.position.z;
+    R_vio_enu = q_vio_enu.toRotationMatrix();
+    
+    state_server.gps_state.orientation = rotationToQuaternion(R_vio_enu);
+    state_server.gps_state.position = t_vio_enu;
+    res.update = false;
+
+    gps_fusion_enable = true;
+  }
+  else{
+    geometry_msgs::Pose pose_vio_enu_filtered;
+    geometry_msgs::Pose t_gps_imu_filtered;
+
+    Eigen::Matrix3d R_vio_enu;
+    R_vio_enu = quaternionToRotation(state_server.gps_state.orientation);
+    Eigen::Quaterniond q_vio_enu;
+    q_vio_enu = R_vio_enu;
+
+    pose_vio_enu_filtered.orientation.x = q_vio_enu.x();
+    pose_vio_enu_filtered.orientation.y = q_vio_enu.y();
+    pose_vio_enu_filtered.orientation.z = q_vio_enu.z();
+    pose_vio_enu_filtered.orientation.w = q_vio_enu.w();
+    pose_vio_enu_filtered.position.x = state_server.gps_state.position.x();
+    pose_vio_enu_filtered.position.y = state_server.gps_state.position.y();
+    pose_vio_enu_filtered.position.z = state_server.gps_state.position.z();
+
+    t_gps_imu_filtered.position.x = state_server.gps_state.t_gps_imu.x();
+    t_gps_imu_filtered.position.y = state_server.gps_state.t_gps_imu.y();
+    t_gps_imu_filtered.position.z = state_server.gps_state.t_gps_imu.z();
+
+    res.pose_vio_enu_filtered = pose_vio_enu_filtered;
+    res.t_gps_imu_filtered = t_gps_imu_filtered;
+    res.update = true;
+  }
+  return true;
+}
+
+void GPSVIO::featureCallback(
     const CameraMeasurementConstPtr& msg) {
 
   // Return if the gravity vector has not been set.
@@ -441,7 +572,22 @@ void MsckfVio::featureCallback(
   return;
 }
 
-void MsckfVio::mocapOdomCallback(
+void GPSVIO::gpsCallback(
+    const geometry_msgs::PoseStampedConstPtr& msg){
+    if (!gps_fusion_enable) return;
+    std::cout << "gpsCallback" << std::endl;
+    gps_measurement.x() = (msg->pose).position.x;
+    gps_measurement.y() = (msg->pose).position.y;
+    gps_measurement.z() = (msg->pose).position.z;
+
+    MatrixXd H_x;
+    VectorXd r;
+    gpsJacobian(H_x, r);
+    // Perform the measurement update step.
+    measurementUpdate(H_x, r, false);
+}
+
+void GPSVIO::mocapOdomCallback(
     const nav_msgs::OdometryConstPtr& msg) {
   static bool first_mocap_odom_msg = true;
 
@@ -507,7 +653,7 @@ void MsckfVio::mocapOdomCallback(
   return;
 }
 
-void MsckfVio::batchImuProcessing(const double& time_bound) {
+void GPSVIO::batchImuProcessing(const double& time_bound) {
   // Counter how many IMU msgs in the buffer are used.
   int used_imu_msg_cntr = 0;
 
@@ -539,7 +685,7 @@ void MsckfVio::batchImuProcessing(const double& time_bound) {
   return;
 }
 
-void MsckfVio::processModel(const double& time,
+void GPSVIO::processModel(const double& time,
     const Vector3d& m_gyro,
     const Vector3d& m_acc) {
 
@@ -550,8 +696,8 @@ void MsckfVio::processModel(const double& time,
   double dtime = time - imu_state.time;
 
   // Compute discrete transition and noise covariance matrix
-  Matrix<double, 21, 21> F = Matrix<double, 21, 21>::Zero();
-  Matrix<double, 21, 12> G = Matrix<double, 21, 12>::Zero();
+  Matrix<double, 30, 30> F = Matrix<double, 30, 30>::Zero();
+  Matrix<double, 30, 12> G = Matrix<double, 30, 12>::Zero();
 
   F.block<3, 3>(0, 0) = -skewSymmetric(gyro);
   F.block<3, 3>(0, 3) = -Matrix3d::Identity();
@@ -570,10 +716,10 @@ void MsckfVio::processModel(const double& time,
   // Approximate matrix exponential to the 3rd order,
   // which can be considered to be accurate enough assuming
   // dtime is within 0.01s.
-  Matrix<double, 21, 21> Fdt = F * dtime;
-  Matrix<double, 21, 21> Fdt_square = Fdt * Fdt;
-  Matrix<double, 21, 21> Fdt_cube = Fdt_square * Fdt;
-  Matrix<double, 21, 21> Phi = Matrix<double, 21, 21>::Identity() +
+  Matrix<double, 30, 30> Fdt = F * dtime;
+  Matrix<double, 30, 30> Fdt_square = Fdt * Fdt;
+  Matrix<double, 30, 30> Fdt_cube = Fdt_square * Fdt;
+  Matrix<double, 30, 30> Phi = Matrix<double, 30, 30>::Identity() +
     Fdt + 0.5*Fdt_square + (1.0/6.0)*Fdt_cube;
 
   // Propogate the state using 4th order Runge-Kutta
@@ -599,20 +745,20 @@ void MsckfVio::processModel(const double& time,
   Phi.block<3, 3>(12, 0) = A2 - (A2*u-w2)*s;
 
   // Propogate the state covariance matrix.
-  Matrix<double, 21, 21> Q = Phi*G*state_server.continuous_noise_cov*
+  Matrix<double, 30, 30> Q = Phi*G*state_server.continuous_noise_cov*
     G.transpose()*Phi.transpose()*dtime;
-  state_server.state_cov.block<21, 21>(0, 0) =
-    Phi*state_server.state_cov.block<21, 21>(0, 0)*Phi.transpose() + Q;
+  state_server.state_cov.block<30, 30>(0, 0) =
+    Phi*state_server.state_cov.block<30, 30>(0, 0)*Phi.transpose() + Q;
 
   if (state_server.cam_states.size() > 0) {
     state_server.state_cov.block(
-        0, 21, 21, state_server.state_cov.cols()-21) =
+        0, 30, 30, state_server.state_cov.cols()-30) =
       Phi * state_server.state_cov.block(
-        0, 21, 21, state_server.state_cov.cols()-21);
+        0, 30, 30, state_server.state_cov.cols()-30);
     state_server.state_cov.block(
-        21, 0, state_server.state_cov.rows()-21, 21) =
+        30, 0, state_server.state_cov.rows()-30, 30) =
       state_server.state_cov.block(
-        21, 0, state_server.state_cov.rows()-21, 21) * Phi.transpose();
+        30, 0, state_server.state_cov.rows()-30, 30) * Phi.transpose();
   }
 
   MatrixXd state_cov_fixed = (state_server.state_cov +
@@ -629,7 +775,7 @@ void MsckfVio::processModel(const double& time,
   return;
 }
 
-void MsckfVio::predictNewState(const double& dt,
+void GPSVIO::predictNewState(const double& dt,
     const Vector3d& gyro,
     const Vector3d& acc) {
 
@@ -694,7 +840,7 @@ void MsckfVio::predictNewState(const double& dt,
   return;
 }
 
-void MsckfVio::stateAugmentation(const double& time) {
+void GPSVIO::stateAugmentation(const double& time) {
 
   const Matrix3d& R_i_c = state_server.imu_state.R_imu_cam0;
   const Vector3d& t_c_i = state_server.imu_state.t_cam0_imu;
@@ -722,7 +868,7 @@ void MsckfVio::stateAugmentation(const double& time) {
   // To simplify computation, the matrix J below is the nontrivial block
   // in Equation (16) in "A Multi-State Constraint Kalman Filter for Vision
   // -aided Inertial Navigation".
-  Matrix<double, 6, 21> J = Matrix<double, 6, 21>::Zero();
+  Matrix<double, 6, 30> J = Matrix<double, 6, 30>::Zero();
   J.block<3, 3>(0, 0) = R_i_c;
   J.block<3, 3>(0, 15) = Matrix3d::Identity();
   J.block<3, 3>(3, 0) = skewSymmetric(R_w_i.transpose()*t_c_i);
@@ -736,10 +882,10 @@ void MsckfVio::stateAugmentation(const double& time) {
   state_server.state_cov.conservativeResize(old_rows+6, old_cols+6);
 
   // Rename some matrix blocks for convenience.
-  const Matrix<double, 21, 21>& P11 =
-    state_server.state_cov.block<21, 21>(0, 0);
+  const Matrix<double, 30, 30>& P11 =
+    state_server.state_cov.block<30, 30>(0, 0);
   const MatrixXd& P12 =
-    state_server.state_cov.block(0, 21, 21, old_cols-21);
+    state_server.state_cov.block(0, 30, 30, old_cols-30);
 
   // Fill in the augmented state covariance.
   state_server.state_cov.block(old_rows, 0, 6, old_cols) << J*P11, J*P12;
@@ -756,7 +902,7 @@ void MsckfVio::stateAugmentation(const double& time) {
   return;
 }
 
-void MsckfVio::addFeatureObservations(
+void GPSVIO::addFeatureObservations(
     const CameraMeasurementConstPtr& msg) {
 
   StateIDType state_id = state_server.imu_state.id;
@@ -788,7 +934,7 @@ void MsckfVio::addFeatureObservations(
   return;
 }
 
-void MsckfVio::measurementJacobian(
+void GPSVIO::measurementJacobian(
     const StateIDType& cam_state_id,
     const FeatureIDType& feature_id,
     Matrix<double, 4, 6>& H_x, Matrix<double, 4, 3>& H_f, Vector4d& r) {
@@ -861,7 +1007,7 @@ void MsckfVio::measurementJacobian(
   return;
 }
 
-void MsckfVio::featureJacobian(
+void GPSVIO::featureJacobian(
     const FeatureIDType& feature_id,
     const std::vector<StateIDType>& cam_state_ids,
     MatrixXd& H_x, VectorXd& r) {
@@ -882,7 +1028,7 @@ void MsckfVio::featureJacobian(
   jacobian_row_size = 4 * valid_cam_state_ids.size();
 
   MatrixXd H_xj = MatrixXd::Zero(jacobian_row_size,
-      21+state_server.cam_states.size()*6);
+      30+state_server.cam_states.size()*6);
   MatrixXd H_fj = MatrixXd::Zero(jacobian_row_size, 3);
   VectorXd r_j = VectorXd::Zero(jacobian_row_size);
   int stack_cntr = 0;
@@ -899,7 +1045,7 @@ void MsckfVio::featureJacobian(
         state_server.cam_states.begin(), cam_state_iter);
 
     // Stack the Jacobians.
-    H_xj.block<4, 6>(stack_cntr, 21+6*cam_state_cntr) = H_xi;
+    H_xj.block<4, 6>(stack_cntr, 30+6*cam_state_cntr) = H_xi;
     H_fj.block<4, 3>(stack_cntr, 0) = H_fi;
     r_j.segment<4>(stack_cntr) = r_i;
     stack_cntr += 4;
@@ -917,8 +1063,36 @@ void MsckfVio::featureJacobian(
   return;
 }
 
-void MsckfVio::measurementUpdate(
-    const MatrixXd& H, const VectorXd& r) {
+void GPSVIO::gpsJacobian(Eigen::MatrixXd& H_x, Eigen::VectorXd& r){
+  int jacobian_row_size = 3;
+
+  MatrixXd H_x_tmp = MatrixXd::Zero(jacobian_row_size,
+      30+state_server.cam_states.size()*6);
+  VectorXd r_tmp = VectorXd::Zero(jacobian_row_size);
+  // a <- b notation!!
+  
+  Matrix3d R_w_i = quaternionToRotation(state_server.imu_state.orientation);
+  Vector3d t_i_w = state_server.imu_state.position;
+  Matrix3d R_w_e = quaternionToRotation(state_server.gps_state.orientation);
+  Vector3d t_w_e = state_server.gps_state.position;
+  Vector3d t_g_i = state_server.gps_state.t_gps_imu;
+  Vector3d t_g_w = t_i_w + R_w_i.transpose() * t_g_i;   
+  
+  VectorXd z_hat = t_w_e + R_w_e * t_g_w;
+
+  // q_w_i, b_gyro, v_i_w, b_acc, p_i_w, q_c_i, p_c_i, q_w_e, p_w_e, p_gps_i
+  H_x_tmp.block<3,3>(0,0) = -R_w_e * R_w_i.transpose() * skewSymmetric(t_g_i);//q_w_i
+  H_x_tmp.block<3,3>(0,12) = R_w_e;//p_i_w
+  H_x_tmp.block<3,3>(0,21) = skewSymmetric(R_w_e * t_g_w);//q_w_e
+  H_x_tmp.block<3,3>(0,24) = Matrix3d::Identity();;//p_w_e
+  H_x_tmp.block<3,3>(0,27) = R_w_e * R_w_i.transpose();//p_gps_i
+
+  H_x = H_x_tmp;
+  r = gps_measurement - z_hat;
+}
+
+void GPSVIO::measurementUpdate(
+    const MatrixXd& H, const VectorXd& r, bool measurementType) {
 
   if (H.rows() == 0 || r.rows() == 0) return;
 
@@ -941,8 +1115,8 @@ void MsckfVio::measurementUpdate(
     (spqr_helper.matrixQ().transpose() * H).evalTo(H_temp);
     (spqr_helper.matrixQ().transpose() * r).evalTo(r_temp);
 
-    H_thin = H_temp.topRows(21+state_server.cam_states.size()*6);
-    r_thin = r_temp.head(21+state_server.cam_states.size()*6);
+    H_thin = H_temp.topRows(30+state_server.cam_states.size()*6);
+    r_thin = r_temp.head(30+state_server.cam_states.size()*6);
 
     //HouseholderQR<MatrixXd> qr_helper(H);
     //MatrixXd Q = qr_helper.householderQ();
@@ -957,9 +1131,20 @@ void MsckfVio::measurementUpdate(
 
   // Compute the Kalman gain.
   const MatrixXd& P = state_server.state_cov;
-  MatrixXd S = H_thin*P*H_thin.transpose() +
+  MatrixXd S;
+  if (measurementType){
+    S = H_thin*P*H_thin.transpose() +
       Feature::observation_noise*MatrixXd::Identity(
         H_thin.rows(), H_thin.rows());
+  }
+  else{
+    Matrix3d noise_matrix = Matrix3d::Identity();
+    noise_matrix(0, 0) *= gps_observation_noise_x;
+    noise_matrix(1, 1) *= gps_observation_noise_y;
+    noise_matrix(2, 2) *= gps_observation_noise_z;
+    S = H_thin*P*H_thin.transpose() +
+      noise_matrix;
+  }
   //MatrixXd K_transpose = S.fullPivHouseholderQr().solve(H_thin*P);
   MatrixXd K_transpose = S.ldlt().solve(H_thin*P);
   MatrixXd K = K_transpose.transpose();
@@ -968,7 +1153,7 @@ void MsckfVio::measurementUpdate(
   VectorXd delta_x = K * r_thin;
 
   // Update the IMU state.
-  const VectorXd& delta_x_imu = delta_x.head<21>();
+  const VectorXd& delta_x_imu = delta_x.head<30>();
 
   if (//delta_x_imu.segment<3>(0).norm() > 0.15 ||
       //delta_x_imu.segment<3>(3).norm() > 0.15 ||
@@ -1000,12 +1185,19 @@ void MsckfVio::measurementUpdate(
   auto cam_state_iter = state_server.cam_states.begin();
   for (int i = 0; i < state_server.cam_states.size();
       ++i, ++cam_state_iter) {
-    const VectorXd& delta_x_cam = delta_x.segment<6>(21+i*6);
+    const VectorXd& delta_x_cam = delta_x.segment<6>(30+i*6);
     const Vector4d dq_cam = smallAngleQuaternion(delta_x_cam.head<3>());
     cam_state_iter->second.orientation = quaternionMultiplication(
         dq_cam, cam_state_iter->second.orientation);
     cam_state_iter->second.position += delta_x_cam.tail<3>();
   }
+
+  // Update the gps state.
+  const VectorXd dq_w_enu = smallAngleQuaternion(delta_x_imu.segment<3>(21));
+  state_server.gps_state.orientation = quaternionMultiplication(
+      dq_w_enu, state_server.gps_state.orientation);
+  state_server.gps_state.position += delta_x_imu.segment<3>(24);
+  state_server.gps_state.t_gps_imu += delta_x_imu.segment<3>(27);
 
   // Update state covariance.
   MatrixXd I_KH = MatrixXd::Identity(K.rows(), H_thin.cols()) - K*H_thin;
@@ -1021,7 +1213,7 @@ void MsckfVio::measurementUpdate(
   return;
 }
 
-bool MsckfVio::gatingTest(
+bool GPSVIO::gatingTest(
     const MatrixXd& H, const VectorXd& r, const int& dof) {
 
   MatrixXd P1 = H * state_server.state_cov * H.transpose();
@@ -1041,7 +1233,9 @@ bool MsckfVio::gatingTest(
   }
 }
 
-void MsckfVio::removeLostFeatures() {
+
+
+void GPSVIO::removeLostFeatures() {
 
   // Remove the features that lost track.
   // BTW, find the size the final Jacobian matrix and residual vector.
@@ -1093,7 +1287,7 @@ void MsckfVio::removeLostFeatures() {
   if (processed_feature_ids.size() == 0) return;
 
   MatrixXd H_x = MatrixXd::Zero(jacobian_row_size,
-      21+6*state_server.cam_states.size());
+      30+6*state_server.cam_states.size());
   VectorXd r = VectorXd::Zero(jacobian_row_size);
   int stack_cntr = 0;
 
@@ -1124,7 +1318,7 @@ void MsckfVio::removeLostFeatures() {
   r.conservativeResize(stack_cntr);
 
   // Perform the measurement update step.
-  measurementUpdate(H_x, r);
+  measurementUpdate(H_x, r, true);
 
   // Remove all processed features from the map.
   for (const auto& feature_id : processed_feature_ids)
@@ -1133,7 +1327,7 @@ void MsckfVio::removeLostFeatures() {
   return;
 }
 
-void MsckfVio::findRedundantCamStates(
+void GPSVIO::findRedundantCamStates(
     vector<StateIDType>& rm_cam_state_ids) {
 
   // Move the iterator to the key position.
@@ -1179,7 +1373,7 @@ void MsckfVio::findRedundantCamStates(
   return;
 }
 
-void MsckfVio::pruneCamStateBuffer() {
+void GPSVIO::pruneCamStateBuffer() {
 
   if (state_server.cam_states.size() < max_cam_state_size)
     return;
@@ -1232,7 +1426,7 @@ void MsckfVio::pruneCamStateBuffer() {
 
   // Compute the Jacobian and residual.
   MatrixXd H_x = MatrixXd::Zero(jacobian_row_size,
-      21+6*state_server.cam_states.size());
+      30+6*state_server.cam_states.size());
   VectorXd r = VectorXd::Zero(jacobian_row_size);
   int stack_cntr = 0;
 
@@ -1267,12 +1461,12 @@ void MsckfVio::pruneCamStateBuffer() {
   r.conservativeResize(stack_cntr);
 
   // Perform measurement update.
-  measurementUpdate(H_x, r);
+  measurementUpdate(H_x, r, true);
 
   for (const auto& cam_id : rm_cam_state_ids) {
     int cam_sequence = std::distance(state_server.cam_states.begin(),
         state_server.cam_states.find(cam_id));
-    int cam_state_start = 21 + 6*cam_sequence;
+    int cam_state_start = 30 + 6*cam_sequence;
     int cam_state_end = cam_state_start + 6;
 
     // Remove the corresponding rows and columns in the state
@@ -1306,7 +1500,7 @@ void MsckfVio::pruneCamStateBuffer() {
   return;
 }
 
-void MsckfVio::onlineReset() {
+void GPSVIO::onlineReset() {
 
   // Never perform online reset if position std threshold
   // is non-positive.
@@ -1349,7 +1543,16 @@ void MsckfVio::onlineReset() {
   nh.param<double>("initial_covariance/extrinsic_translation_cov",
       extrinsic_translation_cov, 1e-4);
 
-  state_server.state_cov = MatrixXd::Zero(21, 21);
+  double rotation_vio_enu_cov, translation_vio_enu_cov;
+  nh.param<double>("initial_covariance/rotation_vio_enu_cov",
+      rotation_vio_enu_cov, 3.0462e-4);
+  nh.param<double>("initial_covariance/translation_vio_enu_cov",
+      translation_vio_enu_cov, 1e-4);
+  double translation_gps_i_cov;
+  nh.param<double>("initial_covariance/translation_gps_i_cov",
+      translation_gps_i_cov, 3.0462e-4);
+
+  state_server.state_cov = MatrixXd::Zero(30, 30);
   for (int i = 3; i < 6; ++i)
     state_server.state_cov(i, i) = gyro_bias_cov;
   for (int i = 6; i < 9; ++i)
@@ -1360,12 +1563,18 @@ void MsckfVio::onlineReset() {
     state_server.state_cov(i, i) = extrinsic_rotation_cov;
   for (int i = 18; i < 21; ++i)
     state_server.state_cov(i, i) = extrinsic_translation_cov;
+  for (int i = 21; i < 24; ++i)
+    state_server.state_cov(i, i) = rotation_vio_enu_cov;
+  for (int i = 24; i < 27; ++i)
+    state_server.state_cov(i, i) = translation_vio_enu_cov;
+  for (int i = 27; i < 30; ++i)
+    state_server.state_cov(i, i) = translation_gps_i_cov;
 
   ROS_WARN("%lld online reset complete...", online_reset_counter);
   return;
 }
 
-void MsckfVio::publish(const ros::Time& time) {
+void GPSVIO::publish(const ros::Time& time) {
 
   // Convert the IMU frame to the body frame.
   const IMUState& imu_state = state_server.imu_state;
@@ -1393,7 +1602,12 @@ void MsckfVio::publish(const ros::Time& time) {
   odom_msg.header.frame_id = fixed_frame_id;
   odom_msg.child_frame_id = child_frame_id;
 
+  geometry_msgs::PoseStamped px4_msg;
+  px4_msg.header.stamp = time;
+  px4_msg.header.frame_id = fixed_frame_id;
+
   tf::poseEigenToMsg(T_b_w, odom_msg.pose.pose);
+  tf::poseEigenToMsg(T_b_w, px4_msg.pose);
   tf::vectorEigenToMsg(body_velocity, odom_msg.twist.twist.linear);
 
   // Convert the covariance.
@@ -1422,6 +1636,7 @@ void MsckfVio::publish(const ros::Time& time) {
     for (int j = 0; j < 3; ++j)
       odom_msg.twist.covariance[i*6+j] = P_body_vel(i, j);
 
+  px4_pub.publish(px4_msg);
   odom_pub.publish(odom_msg);
 
   // Publish the 3D positions of the features that

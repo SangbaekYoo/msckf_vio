@@ -5,8 +5,8 @@
  * All rights reserved.
  */
 
-#ifndef MSCKF_VIO_H
-#define MSCKF_VIO_H
+#ifndef GPSVIO_H
+#define GPSVIO_H
 
 #include <map>
 #include <set>
@@ -21,9 +21,11 @@
 #include <nav_msgs/Odometry.h>
 #include <tf/transform_broadcaster.h>
 #include <std_srvs/Trigger.h>
+#include <msckf_vio/GPSTrigger.h>
 
 #include "imu_state.h"
 #include "cam_state.h"
+#include "gps_state.h"
 #include "feature.hpp"
 #include <msckf_vio/CameraMeasurement.h>
 
@@ -35,18 +37,18 @@ namespace msckf_vio {
  *    Inertial Navigation",
  *    http://www.ee.ucr.edu/~mourikis/tech_reports/TR_MSCKF.pdf
  */
-class MsckfVio {
+class GPSVIO {
   public:
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
     // Constructor
-    MsckfVio(ros::NodeHandle& pnh);
+    GPSVIO(ros::NodeHandle& pnh);
     // Disable copy and assign constructor
-    MsckfVio(const MsckfVio&) = delete;
-    MsckfVio operator=(const MsckfVio&) = delete;
+    GPSVIO(const GPSVIO&) = delete;
+    GPSVIO operator=(const GPSVIO&) = delete;
 
     // Destructor
-    ~MsckfVio() {}
+    ~GPSVIO() {}
 
     /*
      * @brief initialize Initialize the VIO.
@@ -58,8 +60,8 @@ class MsckfVio {
      */
     void reset();
 
-    typedef boost::shared_ptr<MsckfVio> Ptr;
-    typedef boost::shared_ptr<const MsckfVio> ConstPtr;
+    typedef boost::shared_ptr<GPSVIO> Ptr;
+    typedef boost::shared_ptr<const GPSVIO> ConstPtr;
 
   private:
     /*
@@ -70,6 +72,7 @@ class MsckfVio {
     struct StateServer {
       IMUState imu_state;
       CamStateServer cam_states;
+      GPSState gps_state;
 
       // State covariance matrix
       Eigen::MatrixXd state_cov;
@@ -104,6 +107,13 @@ class MsckfVio {
     void featureCallback(const CameraMeasurementConstPtr& msg);
 
     /*
+     * @brief gpsCallback
+     *    Callback function for gps measurements.
+     * @param msg Stereo feature measurements.
+     */
+    void gpsCallback(const geometry_msgs::PoseStampedConstPtr& msg);
+
+    /*
      * @brief publish Publish the results of VIO.
      * @param time The time stamp of output msgs.
      */
@@ -125,6 +135,9 @@ class MsckfVio {
      */
     bool resetCallback(std_srvs::Trigger::Request& req,
         std_srvs::Trigger::Response& res);
+
+    bool gpsfusionCallback(msckf_vio::GPSTrigger::Request& req,
+        msckf_vio::GPSTrigger::Response& res);
 
     // Filter related functions
     // Propogate the state
@@ -152,8 +165,12 @@ class MsckfVio {
     void featureJacobian(const FeatureIDType& feature_id,
         const std::vector<StateIDType>& cam_state_ids,
         Eigen::MatrixXd& H_x, Eigen::VectorXd& r);
+    void gpsJacobian(Eigen::MatrixXd& H_x, Eigen::VectorXd& r);
+    // if measurementType true : visual, false: gps
     void measurementUpdate(const Eigen::MatrixXd& H,
-        const Eigen::VectorXd& r);
+        const Eigen::VectorXd& r, bool measurementType);
+    //void measurementUpdate(const Eigen::MatrixXd& H,
+    //    const Eigen::VectorXd& r);
     bool gatingTest(const Eigen::MatrixXd& H,
         const Eigen::VectorXd&r, const int& dof);
     void removeLostFeatures();
@@ -162,6 +179,8 @@ class MsckfVio {
     void pruneCamStateBuffer();
     // Reset the system online if the uncertainty is too large.
     void onlineReset();
+
+    
 
     // Chi squared test table.
     static std::map<int, double> chi_squared_test_table;
@@ -207,10 +226,13 @@ class MsckfVio {
     // Subscribers and publishers
     ros::Subscriber imu_sub;
     ros::Subscriber feature_sub;
+    ros::Subscriber gps_sub;
     ros::Publisher odom_pub;
+    ros::Publisher px4_pub;
     ros::Publisher feature_pub;
     tf::TransformBroadcaster tf_pub;
     ros::ServiceServer reset_srv;
+    ros::ServiceServer gps_fusion_srv;
 
     // Frame id
     std::string fixed_frame_id;
@@ -228,14 +250,21 @@ class MsckfVio {
     void mocapOdomCallback(
         const nav_msgs::OdometryConstPtr& msg);
 
+    bool gps_fusion_enable;
+    double gps_observation_noise_x;
+    double gps_observation_noise_y;
+    double gps_observation_noise_z;
+
     ros::Subscriber mocap_odom_sub;
     ros::Publisher mocap_odom_pub;
     geometry_msgs::TransformStamped raw_mocap_odom_msg;
     Eigen::Isometry3d mocap_initial_frame;
+
+    Eigen::Vector3d gps_measurement;
 };
 
-typedef MsckfVio::Ptr MsckfVioPtr;
-typedef MsckfVio::ConstPtr MsckfVioConstPtr;
+typedef GPSVIO::Ptr GPSVIOPtr;
+typedef GPSVIO::ConstPtr GPSVIOConstPtr;
 
 } // namespace msckf_vio
 

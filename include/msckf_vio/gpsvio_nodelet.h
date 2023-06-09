@@ -5,22 +5,22 @@
  * All rights reserved.
  */
 
-#ifndef MSCKF_VIO_NODELET_H
-#define MSCKF_VIO_NODELET_H
+#ifndef GPSVIO_NODELET_H
+#define GPSVIO_NODELET_H
 
 #include <nodelet/nodelet.h>
 #include <pluginlib/class_list_macros.h>
-#include <msckf_vio/msckf_vio.h>
+#include <msckf_vio/gpsvio.h>
 
 namespace msckf_vio {
-class MsckfVioNodelet : public nodelet::Nodelet {
+class GPSVIONodelet : public nodelet::Nodelet {
 public:
-  MsckfVioNodelet() { return; }
-  ~MsckfVioNodelet() { return; }
+  GPSVIONodelet() { return; }
+  ~GPSVIONodelet() { return; }
 
 private:
   virtual void onInit();
-  MsckfVioPtr msckf_vio_ptr;
+  GPSVIOPtr gpsvio_ptr;
 };
 } // end namespace msckf_vio
 

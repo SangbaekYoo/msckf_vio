@@ -53,6 +53,7 @@ struct IMUState {
 
   // Transformation between the IMU and the
   // left camera (cam0)
+  Eigen::Vector4d q_imu_cam0;
   Eigen::Matrix3d R_imu_cam0;
   Eigen::Vector3d t_cam0_imu;
 
