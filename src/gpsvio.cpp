@@ -61,6 +61,7 @@ bool GPSVIO::loadParameters() {
   // Frame id
   nh.param<string>("fixed_frame_id", fixed_frame_id, "world");
   nh.param<string>("child_frame_id", child_frame_id, "robot");
+  nh.param<string>("odom_frame_id", odom_frame_id, "odom");
   nh.param<bool>("publish_tf", publish_tf, true);
   nh.param<double>("frame_rate", frame_rate, 40.0);
   nh.param<double>("position_std_threshold", position_std_threshold, 8.0);
@@ -171,6 +172,8 @@ bool GPSVIO::loadParameters() {
     utils::getTransformEigen(nh, "cam1/T_cn_cnm1");
   IMUState::T_imu_body =
     utils::getTransformEigen(nh, "T_imu_body").inverse();
+
+  T_odom_w = Eigen::Isometry3d::Identity();
 
   // Maximum number of camera states to be stored
   nh.param<int>("max_cam_state_size", max_cam_state_size, 30);
@@ -583,8 +586,24 @@ void GPSVIO::gpsCallback(
     MatrixXd H_x;
     VectorXd r;
     gpsJacobian(H_x, r);
+
+    // pose before update
+    const IMUState& imu_state = state_server.imu_state;
+    Eigen::Isometry3d T_i_w_before = Eigen::Isometry3d::Identity();
+    T_i_w_before.linear() = quaternionToRotation(
+        imu_state.orientation).transpose();
+    T_i_w_before.translation() = imu_state.position;
+
     // Perform the measurement update step.
     measurementUpdate(H_x, r, false);
+
+    const IMUState& imu_state = state_server.imu_state;
+    Eigen::Isometry3d T_i_w_after = Eigen::Isometry3d::Identity();
+    T_i_w_after.linear() = quaternionToRotation(
+        imu_state.orientation).transpose();
+    T_i_w_after.translation() = imu_state.position;
+    del_T = T_i_w_before.inverse() * T_i_w_after;
+    T_odom_w = T_odom_w * del_T;
 }
 
 void GPSVIO::mocapOdomCallback(
@@ -1588,12 +1607,19 @@ void GPSVIO::publish(const ros::Time& time) {
   Eigen::Vector3d body_velocity =
     IMUState::T_imu_body.linear() * imu_state.velocity;
 
+  Eigen::Isometry3d T_b_odom = T_odom_w.inverse() * T_b_w;
+  
   // Publish tf
   if (publish_tf) {
     tf::Transform T_b_w_tf;
     tf::transformEigenToTF(T_b_w, T_b_w_tf);
     tf_pub.sendTransform(tf::StampedTransform(
           T_b_w_tf, time, fixed_frame_id, child_frame_id));
+    
+    tf::Transform T_b_odom_tf;
+    tf::transformEigenToTF(T_b_odom, T_b_odom_tf);
+    tf_pub.sendTransform(tf::StampedTransform(
+          T_b_odom_tf, time, odom_frame_id, child_frame_id));
   }
 
   // Publish the odometry
@@ -1604,10 +1630,10 @@ void GPSVIO::publish(const ros::Time& time) {
 
   geometry_msgs::PoseStamped px4_msg;
   px4_msg.header.stamp = time;
-  px4_msg.header.frame_id = fixed_frame_id;
+  px4_msg.header.frame_id = odom_frame_id;
 
   tf::poseEigenToMsg(T_b_w, odom_msg.pose.pose);
-  tf::poseEigenToMsg(T_b_w, px4_msg.pose);
+  tf::poseEigenToMsg(T_b_odom, px4_msg.pose);
   tf::vectorEigenToMsg(body_velocity, odom_msg.twist.twist.linear);
 
   // Convert the covariance.

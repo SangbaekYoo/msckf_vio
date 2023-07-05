@@ -237,6 +237,7 @@ class GPSVIO {
     // Frame id
     std::string fixed_frame_id;
     std::string child_frame_id;
+    std::string odom_frame_id;
 
     // Whether to publish tf or not.
     bool publish_tf;
@@ -259,7 +260,7 @@ class GPSVIO {
     ros::Publisher mocap_odom_pub;
     geometry_msgs::TransformStamped raw_mocap_odom_msg;
     Eigen::Isometry3d mocap_initial_frame;
-
+    Eigen::Isometry3d T_odom_w;
     Eigen::Vector3d gps_measurement;
 };
 
