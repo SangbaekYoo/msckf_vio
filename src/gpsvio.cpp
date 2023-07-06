@@ -597,12 +597,11 @@ void GPSVIO::gpsCallback(
     // Perform the measurement update step.
     measurementUpdate(H_x, r, false);
 
-    const IMUState& imu_state = state_server.imu_state;
     Eigen::Isometry3d T_i_w_after = Eigen::Isometry3d::Identity();
     T_i_w_after.linear() = quaternionToRotation(
         imu_state.orientation).transpose();
     T_i_w_after.translation() = imu_state.position;
-    del_T = T_i_w_before.inverse() * T_i_w_after;
+    Eigen::Isometry3d del_T = T_i_w_before.inverse() * T_i_w_after;
     T_odom_w = T_odom_w * del_T;
 }
 
