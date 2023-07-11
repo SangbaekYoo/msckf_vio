@@ -3,7 +3,7 @@
   <arg name="robot" default="body"/>
   <arg name="fixed_frame_id" default="world"/>
   <arg name="calibration_file"
-    default="$(find msckf_vio)/config/controllab/camchain-imucam-control.yaml"/>
+    default="$(find msckf_vio)/config/controllab/d455/camchain-imucam-control.yaml"/>
 
   <!-- Image Processor Nodelet  -->
   <include file="$(find msckf_vio)/launch/image_processor_control.launch">
