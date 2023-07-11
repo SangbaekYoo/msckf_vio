@@ -1,6 +1,6 @@
 <launch>
 
-  <arg name="robot" default="dracor"/>
+  <arg name="robot" default="body"/>
   <arg name="fixed_frame_id" default="world"/>
   <arg name="calibration_file"
     default="$(find msckf_vio)/config/controllab/camchain-imucam-control.yaml"/>

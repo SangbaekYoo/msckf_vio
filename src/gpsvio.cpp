@@ -588,21 +588,22 @@ void GPSVIO::gpsCallback(
     gpsJacobian(H_x, r);
 
     // pose before update
-    const IMUState& imu_state = state_server.imu_state;
+    const IMUState& imu_state_before = state_server.imu_state;
     Eigen::Isometry3d T_i_w_before = Eigen::Isometry3d::Identity();
     T_i_w_before.linear() = quaternionToRotation(
-        imu_state.orientation).transpose();
-    T_i_w_before.translation() = imu_state.position;
+        imu_state_before.orientation).transpose();
+    T_i_w_before.translation() = imu_state_before.position;
 
     // Perform the measurement update step.
     measurementUpdate(H_x, r, false);
 
+    const IMUState& imu_state_after = state_server.imu_state;
     Eigen::Isometry3d T_i_w_after = Eigen::Isometry3d::Identity();
     T_i_w_after.linear() = quaternionToRotation(
-        imu_state.orientation).transpose();
-    T_i_w_after.translation() = imu_state.position;
+        imu_state_after.orientation).transpose();
+    T_i_w_after.translation() = imu_state_after.position;
     Eigen::Isometry3d del_T = T_i_w_before.inverse() * T_i_w_after;
-    T_odom_w = T_odom_w * del_T;
+    T_odom_w = T_i_w_before * del_T * T_i_w_before.inverse() * T_odom_w;
 }
 
 void GPSVIO::mocapOdomCallback(
@@ -1607,13 +1608,18 @@ void GPSVIO::publish(const ros::Time& time) {
     IMUState::T_imu_body.linear() * imu_state.velocity;
 
   Eigen::Isometry3d T_b_odom = T_odom_w.inverse() * T_b_w;
-  
+  Eigen::Isometry3d T_odom_w = T_b_w * T_b_odom.inverse();
+
   // Publish tf
   if (publish_tf) {
-    tf::Transform T_b_w_tf;
-    tf::transformEigenToTF(T_b_w, T_b_w_tf);
+    //tf::Transform T_b_w_tf;
+    //tf::transformEigenToTF(T_b_w, T_b_w_tf);
+    //tf_pub.sendTransform(tf::StampedTransform(
+    //      T_b_w_tf, time, fixed_frame_id, child_frame_id));
+    tf::Transform T_odom_w_tf;
+    tf::transformEigenToTF(T_odom_w, T_odom_w_tf);
     tf_pub.sendTransform(tf::StampedTransform(
-          T_b_w_tf, time, fixed_frame_id, child_frame_id));
+          T_odom_w_tf, time, fixed_frame_id, odom_frame_id));
     
     tf::Transform T_b_odom_tf;
     tf::transformEigenToTF(T_b_odom, T_b_odom_tf);
